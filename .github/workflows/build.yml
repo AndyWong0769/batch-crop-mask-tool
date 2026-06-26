@@ -1,111 +1,83 @@
-name: Build & Release
+name: Build BatchCropMaskTool (macOS DMG · Intel x64)
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [ "main" ]
   workflow_dispatch:
 
-permissions:
-  contents: write
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  # ── Windows ──────────────────────────────────────────────
-  build-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt pyinstaller
-
-      - name: Build EXE
-        run: |
-          pyinstaller --onefile --windowed --icon="assets/1.ico" --name="BatchCropMaskTool" batch-crop-mask-tool.py
-
-      - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: BatchCropMaskTool-Windows
-          path: dist/BatchCropMaskTool.exe
-
-  # ── macOS ────────────────────────────────────────────────
-  build-macos:
+  build:
     runs-on: macos-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install dependencies
+      # ------------------------------------------------------------------
+      # Use Rosetta 2 to install Intel Python via /usr/local/ Homebrew
+      # so the .app runs on Intel Macs (including VMware VMs).
+      # ------------------------------------------------------------------
+      - name: Setup Rosetta 2 Intel Homebrew
         run: |
-          pip install -r requirements.txt pyinstaller
-
-      - name: Build macOS App Bundle
-        run: |
-          pyinstaller --windowed \
-            --icon="assets/1.icns" \
-            --name="BatchCropMaskTool" \
-            --osx-bundle-identifier="com.andywong.batch-crop-mask-tool" \
-            --add-data "assets:assets" \
-            batch-crop-mask-tool.py
-          # Verify the .app was created
-          ls -la dist/
-
-      - name: Package into DMG
-        run: |
-          APP="dist/BatchCropMaskTool.app"
-
-          # If --onedir produced a folder instead, find the .app
-          if [ ! -e "$APP" ]; then
-            APP=$(find dist -name "*.app" -maxdepth 2 | head -1)
+          if [ ! -f /usr/local/bin/brew ]; then
+            arch -x86_64 /bin/bash -c \
+              "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+              < /dev/null || true
           fi
+          echo "Intel Homebrew ready"
 
-          echo "Using app: $APP"
+      - name: Install Intel Python & PyInstaller
+        run: |
+          arch -x86_64 /bin/bash -c '
+            eval "$(/usr/local/bin/brew shellenv)"
+            brew install python@3.11 python-tk
+            pip3 install --upgrade pip
+            pip3 install -r requirements.txt
+          '
 
-          # Create DMG staging
-          mkdir -p dmg_staging
-          cp -R "$APP" dmg_staging/
-          ln -s /Applications dmg_staging/Applications
+      # ------------------------------------------------------------------
+      # Build .app bundle with PyInstaller (Intel x64)
+      # ------------------------------------------------------------------
+      - name: Build app bundle
+        run: |
+          arch -x86_64 /bin/bash -c '
+            eval "$(/usr/local/bin/brew shellenv)"
+            export MACOSX_DEPLOYMENT_TARGET=11.0
+            ls -la 1.icns
+            pyinstaller --noconsole --windowed --onefile \
+              --name "BatchCropMaskTool" \
+              --icon="1.icns" \
+              "batch-crop-mask-tool.py"
+          '
 
-          # Create DMG with background image support
-          hdiutil create -volname "BatchCropMaskTool" \
-            -srcfolder dmg_staging \
-            -ov -format UDZO \
-            -imagekey zlib-level=9 \
-            dist/BatchCropMaskTool.dmg
+      # ------------------------------------------------------------------
+      # Create DMG installer
+      # ------------------------------------------------------------------
+      - name: Create DMG
+        run: |
+          brew install create-dmg
+          mkdir -p output
 
-          echo "DMG created:"
-          ls -lh dist/BatchCropMaskTool.dmg
+          create-dmg \
+            --volname "BatchCropMaskTool" \
+            --volicon "1.icns" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "BatchCropMaskTool.app" 175 190 \
+            --hide-extension "BatchCropMaskTool.app" \
+            --app-drop-link 425 190 \
+            "output/BatchCropMaskTool_Installer.dmg" \
+            "dist/BatchCropMaskTool.app"
 
-      - name: Upload macOS artifact
+      # ------------------------------------------------------------------
+      # Upload DMG as artifact
+      # ------------------------------------------------------------------
+      - name: Upload DMG
         uses: actions/upload-artifact@v4
         with:
-          name: BatchCropMaskTool-macOS
-          path: dist/BatchCropMaskTool.dmg
-
-  # ── Release ──────────────────────────────────────────────
-  release:
-    needs: [build-windows, build-macos]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: BatchCropMaskTool-*
-          merge-multiple: true
-          path: release/
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            release/BatchCropMaskTool.exe
-            release/BatchCropMaskTool.dmg
-          generate_release_notes: true
+          name: BatchCropMaskTool-macOS-DMG
+          path: output/BatchCropMaskTool_Installer.dmg
