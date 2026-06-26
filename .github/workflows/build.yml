@@ -33,9 +33,9 @@ jobs:
         run: |
           arch -x86_64 /bin/bash -c '
             eval "$(/usr/local/bin/brew shellenv)"
-            brew install python@3.11 python-tk
-            pip3 install --upgrade pip
-            pip3 install -r requirements.txt
+            brew install python@3.11 python-tk || true
+            python3.11 -m pip install --upgrade pip
+            python3.11 -m pip install -r requirements.txt
           '
 
       # ------------------------------------------------------------------
@@ -47,7 +47,7 @@ jobs:
             eval "$(/usr/local/bin/brew shellenv)"
             export MACOSX_DEPLOYMENT_TARGET=11.0
             ls -la 1.icns
-            pyinstaller --noconsole --windowed --onefile \
+            python3.11 -m PyInstaller --noconsole --windowed --onefile \
               --name "BatchCropMaskTool" \
               --icon="1.icns" \
               "batch-crop-mask-tool.py"
